@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional
 import os
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+import io
 
 from loguru import logger
 import aiohttp
@@ -81,6 +83,14 @@ class StockAnalysis(PluginBase):
         
         self.analysis_tasks = {}  # 存储正在进行的分析任务
         self.http_session = aiohttp.ClientSession()
+
+        # 初始化字体路径
+        self.font_path = os.path.join(os.path.dirname(__file__), "fonts", "msyh.ttc")
+        if not os.path.exists(self.font_path):
+            os.makedirs(os.path.dirname(self.font_path), exist_ok=True)
+            # 如果字体文件不存在，需要下载或复制微软雅黑字体到该位置
+            self.logger.warning(f"字体文件不存在: {self.font_path}")
+            self.font_path = None
 
     async def close(self):
         """插件关闭时，取消所有未完成的分析任务并关闭会话。"""
@@ -515,6 +525,102 @@ MA20趋势：{', '.join([f'{x:.2f}' for x in data['indicators']['MA20'][-20:]])}
             self.logger.error(f"与 Dify 通信时发生错误: {e}")
             return None
 
+    def _text_to_image(self, text: str, title: str = "") -> bytes:
+        """
+        将文本转换为图片
+        
+        Args:
+            text: 要转换的文本
+            title: 标题
+            
+        Returns:
+            图片的二进制数据
+        """
+        try:
+            # 设置字体
+            if self.font_path and os.path.exists(self.font_path):
+                title_font = ImageFont.truetype(self.font_path, 40)
+                content_font = ImageFont.truetype(self.font_path, 30)
+            else:
+                # 使用默认字体
+                title_font = ImageFont.load_default()
+                content_font = ImageFont.load_default()
+            
+            # 计算图片大小
+            padding = 50
+            line_spacing = 10
+            
+            # 分割文本为行
+            lines = text.split('\n')
+            
+            # 创建临时图片来计算文本大小
+            temp_img = Image.new('RGB', (1, 1), color='white')
+            temp_draw = ImageDraw.Draw(temp_img)
+            
+            # 计算标题大小
+            if title:
+                title_bbox = temp_draw.textbbox((0, 0), title, font=title_font)
+                title_w = title_bbox[2] - title_bbox[0]
+                title_h = title_bbox[3] - title_bbox[1]
+            else:
+                title_w, title_h = 0, 0
+            
+            # 计算每行文本的大小
+            max_line_width = 0
+            total_height = title_h + padding if title else padding
+            
+            for line in lines:
+                if line.strip():
+                    bbox = temp_draw.textbbox((0, 0), line, font=content_font)
+                    w = bbox[2] - bbox[0]
+                    h = bbox[3] - bbox[1]
+                    max_line_width = max(max_line_width, w)
+                    total_height += h + line_spacing
+            
+            # 设置图片大小
+            width = max(max_line_width + padding * 2, title_w + padding * 2)
+            height = total_height + padding
+            
+            # 创建图片
+            img = Image.new('RGB', (width, height), color='white')
+            draw = ImageDraw.Draw(img)
+            
+            # 绘制标题
+            if title:
+                title_x = (width - title_w) // 2
+                draw.text((title_x, padding//2), title, font=title_font, fill='black')
+                current_y = title_h + padding
+            else:
+                current_y = padding
+            
+            # 绘制正文
+            for line in lines:
+                if line.strip():
+                    bbox = draw.textbbox((0, 0), line, font=content_font)
+                    h = bbox[3] - bbox[1]
+                    draw.text((padding, current_y), line, font=content_font, fill='black')
+                    current_y += h + line_spacing
+            
+            # 添加水印
+            watermark = "老夏的金库"
+            watermark_font = ImageFont.truetype(self.font_path, 20) if self.font_path else ImageFont.load_default()
+            watermark_bbox = draw.textbbox((0, 0), watermark, font=watermark_font)
+            w = watermark_bbox[2] - watermark_bbox[0]
+            h = watermark_bbox[3] - watermark_bbox[1]
+            draw.text((width - w - padding, height - h - padding//2), 
+                     watermark, font=watermark_font, fill='gray')
+            
+            # 转换为字节流
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format='PNG')
+            img_byte_arr = img_byte_arr.getvalue()
+            
+            return img_byte_arr
+            
+        except Exception as e:
+            self.logger.exception(f"生成图片失败: {e}")
+            return None
+
     async def _analyze_stock(self, bot: WechatAPIClient, chat_id: str, code: str) -> None:
         try:
             logger.info(f"开始分析 {code}")
@@ -580,14 +686,30 @@ MA20趋势：{', '.join([f'{x:.2f}' for x in data['indicators']['MA20'][-20:]])}
             # 格式化分析结果
             formatted_result = self._format_analysis_result(analysis)
             
-            # 发送分析结果
-            await bot.send_text_message(chat_id, formatted_result)
+            # 将分析结果转换为图片
+            title = f"{analysis['name']}({code}) 分析报告"
+            img_data = self._text_to_image(formatted_result, title)
+            
+            if img_data:
+                # 发送图片
+                await bot.send_image_message(chat_id, img_data)
+            else:
+                # 如果图片生成失败，退回到发送文本
+                await bot.send_text_message(chat_id, formatted_result)
             
             # 等待 dify 分析结果
             try:
                 dify_result = await dify_task
                 if dify_result and 'answer' in dify_result:
-                    await bot.send_text_message(chat_id, f"\n\n【AI 深度分析】\n{dify_result['answer']}")
+                    # 将AI分析结果也转换为图片
+                    ai_analysis_img = self._text_to_image(
+                        dify_result['answer'],
+                        f"{analysis['name']}({code}) AI深度分析"
+                    )
+                    if ai_analysis_img:
+                        await bot.send_image_message(chat_id, ai_analysis_img)
+                    else:
+                        await bot.send_text_message(chat_id, f"\n\n【AI 深度分析】\n{dify_result['answer']}")
             except Exception as e:
                 self.logger.error(f"获取 Dify 分析结果失败: {e}")
             
