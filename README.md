@@ -5,6 +5,8 @@
 一个专为 **XYBotv2** 设计的强大微信插件，可以直接在您的聊天界面中实现实时股票数据分析和投资建议。此插件利用 `akshare` 库获取股票数据，并可选择与 Dify AI 服务集成，以进行深入的分析和建议。
 
 <img src="https://github.com/user-attachments/assets/a2627960-69d8-400d-903c-309dbeadf125" width="400" height="600">
+
+
 ## 功能特性 ✨
 
 -   **实时股票分析**：获取A股、港股、美股、ETF和LOF的最新股票数据。
