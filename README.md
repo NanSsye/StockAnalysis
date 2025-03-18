@@ -23,7 +23,7 @@
 
 -   `akshare`：用于检索股票数据。需要1.16.43版本！！！！！ 
     ```bash
-    pip3 install akshare==1.16.43
+    pip install akshare==1.16.43
     ```
 -   `loguru`：用于增强的日志记录。
     ```bash
