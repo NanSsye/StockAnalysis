@@ -21,9 +21,9 @@
 
 在使用股票分析插件之前，请确保您已安装以下依赖项：
 
--   `akshare`：用于检索股票数据。
+-   `akshare`：用于检索股票数据。需要1.16.43版本！！！！！ 
     ```bash
-    pip install akshare
+    pip3 install akshare==1.16.43
     ```
 -   `loguru`：用于增强的日志记录。
     ```bash
