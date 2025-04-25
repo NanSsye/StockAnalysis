@@ -206,6 +206,9 @@ class StockAnalysis(PluginBase):
                 try:
                     # 尝试获取股票名称和状态
                     stock_info = self.ak.stock_zh_a_spot_em()
+                    stock_name = ""  # 初始化股票名称变量
+                    actual_code = stock_code  # 默认使用原始代码
+                    
                     if not stock_info.empty:
                         # 确保股票代码格式一致（补齐前导零）
                         padded_code = stock_code.zfill(6)
@@ -297,6 +300,8 @@ class StockAnalysis(PluginBase):
                     latest_turnover = df['turnover_rate'].iloc[-1] if 'turnover_rate' in df.columns else 0
                     
                     # 将额外信息添加到DataFrame的属性中
+                    df.attrs['stock_name'] = stock_name  # 添加股票名称到属性
+                    df.attrs['market_type'] = market_type  # 添加市场类型到属性
                     df.attrs['latest_change'] = latest_change
                     df.attrs['latest_price'] = latest_price
                     df.attrs['latest_turnover'] = latest_turnover
@@ -310,6 +315,9 @@ class StockAnalysis(PluginBase):
                         self.logger.info("尝试使用新浪财经数据源...")
                         df = self.ak.stock_zh_a_daily(symbol=stock_code, adjust="qfq")
                         if not df.empty:
+                            # 在备用数据源中也添加股票信息
+                            df.attrs['stock_name'] = "未知"  # 备用数据源可能无法获取股票名称
+                            df.attrs['market_type'] = market_type
                             return df
                     except Exception as e2:
                         self.logger.error(f"备用数据源也获取失败: {str(e2)}")
@@ -657,9 +665,17 @@ MA20趋势：{', '.join([f'{x:.2f}' for x in data['indicators']['MA20'][-20:]])}
                 
             # 添加代码和名称到分析结果
             analysis['code'] = code
+            
+            # 获取并记录股票名称
+            stock_name = df.attrs.get('stock_name', '')
+            fund_name = df.attrs.get('fund_name', '')
+            self.logger.info(f"DataFrameattrs中的名称信息: stock_name='{stock_name}', fund_name='{fund_name}'")
+            
             analysis['name'] = df.attrs.get('stock_name', '') or df.attrs.get('fund_name', '')
             analysis['type'] = df.attrs.get('market_type', market_type)
             analysis['currency'] = self._get_currency_by_market(market_type)
+            
+            self.logger.info(f"最终使用的股票名称: '{analysis['name']}'")
             
             # 准备发送给 Dify 的数据
             stock_data = {
@@ -687,7 +703,8 @@ MA20趋势：{', '.join([f'{x:.2f}' for x in data['indicators']['MA20'][-20:]])}
             formatted_result = self._format_analysis_result(analysis)
             
             # 将分析结果转换为图片
-            title = f"{analysis['name']}({code}) 分析报告"
+            stock_name = analysis['name'] if analysis['name'] else code
+            title = f"{stock_name}({code}) 分析报告"
             img_data = self._text_to_image(formatted_result, title)
             
             if img_data:
@@ -704,7 +721,7 @@ MA20趋势：{', '.join([f'{x:.2f}' for x in data['indicators']['MA20'][-20:]])}
                     # 将AI分析结果也转换为图片
                     ai_analysis_img = self._text_to_image(
                         dify_result['answer'],
-                        f"{analysis['name']}({code}) AI深度分析"
+                        f"{stock_name}({code}) AI深度分析"
                     )
                     if ai_analysis_img:
                         await bot.send_image_message(chat_id, ai_analysis_img)
